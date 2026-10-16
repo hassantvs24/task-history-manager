@@ -2,6 +2,8 @@
 
 A lightweight Windows desktop app (Tkinter) to keep track of your tasks along with the **Kimi** and **Claude** CLI session commands needed to resume each one.
 
+**⬇️ Download the latest portable exe:** [Task History Manager.exe](https://github.com/hassantvs24/task-history-manager/releases/latest) — no installation or Python required.
+
 ## Features
 
 - **Add / Update tasks** with a Task ID, title, and resume commands for Kimi and Claude
