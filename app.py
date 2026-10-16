@@ -71,6 +71,7 @@ class App(tk.Tk):
         self.tasks = load_tasks()
         self.notes = load_notes()
         self.load_settings()
+        self.manual_order = False  # True = display tasks in saved (drag-reordered) order
 
         self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill="both", expand=True)
@@ -117,6 +118,7 @@ class App(tk.Tk):
         self.search_var.trace_add("write", lambda *_: self.refresh_list())
         ttk.Entry(search_bar, textvariable=self.search_var, width=40).pack(side="left", padx=4)
         ttk.Button(search_bar, text="Clear", width=6, command=self.clear_search).pack(side="left", padx=2)
+        ttk.Button(search_bar, text="Default Order", command=self.reset_task_order).pack(side="left", padx=(12, 2))
 
         # --- Buttons (same row as search, right side) ---
         ttk.Button(search_bar, text="Import", command=self.import_tasks).pack(side="right", padx=2)
@@ -143,6 +145,12 @@ class App(tk.Tk):
         sb.pack(side="left", fill="y", pady=8)
 
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
+
+        # --- drag & drop reordering (manual order) ---
+        self._task_drag_iid = None
+        self.tree.bind("<Button-1>", self.on_task_drag_start)
+        self.tree.bind("<B1-Motion>", self.on_task_drag_motion)
+        self.tree.bind("<ButtonRelease-1>", self.on_task_drag_end)
 
         self.build_notes_tab(notes_tab)
 
@@ -309,17 +317,48 @@ class App(tk.Tk):
 
     def heading_text(self, col):
         arrow = ""
-        if col == self.sort_col:
+        if not self.manual_order and col == self.sort_col:
             arrow = "  \u25bc" if self.sort_reverse else "  \u25b2"
         labels = {"datetime": "Date/Time", "title": "Task Title", "kimi": "Kimi", "claude": "Claude"}
         return labels[col] + arrow
 
     def sort_by(self, col):
+        self.manual_order = False
         if col == self.sort_col:
             self.sort_reverse = not self.sort_reverse
         else:
             self.sort_col = col
             self.sort_reverse = col == "datetime"  # datetime: newest first; others: A-Z
+        for c in ("datetime", "title", "kimi", "claude"):
+            self.tree.heading(c, text=self.heading_text(c))
+        self.refresh_list()
+
+    # --- drag & drop reordering ---
+    def on_task_drag_start(self, evt):
+        self._task_drag_iid = self.tree.identify_row(evt.y) or None
+
+    def on_task_drag_motion(self, evt):
+        if not self._task_drag_iid:
+            return
+        target = self.tree.identify_row(evt.y)
+        if target and target != self._task_drag_iid:
+            self.tree.move(self._task_drag_iid, "", self.tree.index(target))
+
+    def on_task_drag_end(self, _evt):
+        if not self._task_drag_iid:
+            return
+        order = self.tree.get_children()  # row iids are task titles
+        by_title = {t["title"]: t for t in self.tasks}
+        self.tasks = [by_title[iid] for iid in order]
+        save_tasks(self.tasks)
+        self.manual_order = True
+        for c in ("datetime", "title", "kimi", "claude"):
+            self.tree.heading(c, text=self.heading_text(c))
+        self._task_drag_iid = None
+
+    # --- Reorder button: restore the drag & drop (manual) order ---
+    def reset_task_order(self):
+        self.manual_order = True
         for c in ("datetime", "title", "kimi", "claude"):
             self.tree.heading(c, text=self.heading_text(c))
         self.refresh_list()
@@ -496,9 +535,10 @@ class App(tk.Tk):
             return all(w in tid or w in title for w in words)
 
         shown = [t for t in self.tasks if not words or matches(t)]
-        shown.sort(key=key, reverse=self.sort_reverse)
+        if not self.manual_order:
+            shown.sort(key=key, reverse=self.sort_reverse)
         for t in shown:
-            self.tree.insert("", "end", values=(t.get("datetime", ""), t["title"], t["kimi"], t["claude"]))
+            self.tree.insert("", "end", iid=t["title"], values=(t.get("datetime", ""), t["title"], t["kimi"], t["claude"]))
         self.status_var.set(f"Showing {len(shown)} of {len(self.tasks)} task(s)")
 
 
