@@ -7,6 +7,7 @@ A lightweight Windows desktop app (Tkinter) to keep track of your tasks along wi
 ## Features
 
 - **Add / Update tasks** with a Task ID, title, and resume commands for Kimi and Claude
+- **Notes tab** — save multi-line notes with add/update, copy, and delete (stored in `notes.json`)
 - **One-click Copy** — copy a session command to the clipboard, or **Run** it directly from the app
 - **Search & filter** tasks instantly as you type
 - **Import / Export** tasks as CSV for backup or sharing
@@ -37,6 +38,7 @@ This uses PyInstaller to produce a single-file, windowed executable at `dist\Tas
 | File           | Purpose                                  |
 | -------------- | ---------------------------------------- |
 | `tasks.json`   | Your saved tasks (created automatically) |
+| `notes.json`   | Your saved notes (created automatically) |
 | `settings.json`| Window geometry (created automatically)  |
 
 ## Requirements

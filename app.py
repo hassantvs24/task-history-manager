@@ -4,6 +4,7 @@ import ctypes
 import json
 import subprocess
 import sys
+import uuid
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -12,6 +13,7 @@ from pathlib import Path
 # When bundled by PyInstaller, store data next to the exe so it persists
 BASE_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
 DATA_FILE = BASE_DIR / "tasks.json"
+NOTES_FILE = BASE_DIR / "notes.json"
 SETTINGS_FILE = BASE_DIR / "settings.json"
 
 
@@ -51,15 +53,35 @@ def save_tasks(tasks):
     DATA_FILE.write_text(json.dumps(tasks, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def load_notes():
+    if NOTES_FILE.exists():
+        notes = json.loads(NOTES_FILE.read_text(encoding="utf-8"))
+        return [{"id": n.get("id") or uuid.uuid4().hex, "text": n.get("text", "")} for n in notes]
+    return []
+
+
+def save_notes(notes):
+    NOTES_FILE.write_text(json.dumps(notes, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Task History Manager")
         self.tasks = load_tasks()
+        self.notes = load_notes()
         self.load_settings()
 
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill="both", expand=True)
+
+        tasks_tab = ttk.Frame(self.notebook)
+        self.notebook.add(tasks_tab, text="Tasks")
+        notes_tab = ttk.Frame(self.notebook)
+        self.notebook.add(notes_tab, text="Notes")
+
         # --- Input form ---
-        form = ttk.LabelFrame(self, text="Add Task", padding=8)
+        form = ttk.LabelFrame(tasks_tab, text="Add Task", padding=8)
         form.pack(fill="x", padx=8, pady=8)
 
         ttk.Label(form, text="Task ID:").grid(row=0, column=0, sticky="w")
@@ -86,7 +108,7 @@ class App(tk.Tk):
         form.columnconfigure(1, weight=1)
 
         # --- Search ---
-        search_bar = ttk.Frame(self)
+        search_bar = ttk.Frame(tasks_tab)
         search_bar.pack(fill="x", padx=8)
         self.status_var = tk.StringVar()
         ttk.Label(search_bar, textvariable=self.status_var).pack(side="left", padx=(0, 15))
@@ -106,7 +128,7 @@ class App(tk.Tk):
 
         # --- Task list ---
         cols = ("datetime", "title", "kimi", "claude")
-        self.tree = ttk.Treeview(self, columns=cols, show="headings", height=18, selectmode="extended")
+        self.tree = ttk.Treeview(tasks_tab, columns=cols, show="headings", height=18, selectmode="extended")
         self.sort_col = "datetime"
         self.sort_reverse = True  # newest first by default
         for c in cols:
@@ -115,15 +137,18 @@ class App(tk.Tk):
         self.tree.column("title", width=420)
         self.tree.column("kimi", width=280)
         self.tree.column("claude", width=280)
-        sb = ttk.Scrollbar(self, orient="vertical", command=self.tree.yview)
+        sb = ttk.Scrollbar(tasks_tab, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
         self.tree.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=8)
         sb.pack(side="left", fill="y", pady=8)
 
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
 
+        self.build_notes_tab(notes_tab)
+
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.refresh_list()
+        self.refresh_notes()
 
     # --- Settings: always open at the standard size ---
     def load_settings(self):
@@ -131,6 +156,138 @@ class App(tk.Tk):
 
     def on_close(self):
         self.destroy()
+
+    # --- Notes tab ---
+    def build_notes_tab(self, tab):
+        # --- Note editor ---
+        editor_frame = ttk.LabelFrame(tab, text="Note", padding=8)
+        editor_frame.pack(fill="x", padx=8, pady=8)
+        self.note_text = tk.Text(editor_frame, height=8, wrap="word")
+        note_sb = ttk.Scrollbar(editor_frame, orient="vertical", command=self.note_text.yview)
+        self.note_text.configure(yscrollcommand=note_sb.set)
+        self.note_text.pack(side="left", fill="both", expand=True)
+        note_sb.pack(side="left", fill="y")
+
+        # --- Buttons ---
+        btn_row = ttk.Frame(tab)
+        btn_row.pack(fill="x", padx=8)
+        ttk.Button(btn_row, text="Add / Update", command=self.add_note).pack(side="left", padx=2)
+        ttk.Button(btn_row, text="Clear", width=8, command=self.clear_note_editor).pack(side="left", padx=2)
+        ttk.Button(btn_row, text="Copy", width=8, command=self.copy_note).pack(side="left", padx=2)
+        ttk.Button(btn_row, text="Delete", command=self.delete_note).pack(side="right", padx=2)
+
+        # --- Notes list ---
+        self.notes_tree = ttk.Treeview(tab, columns=("preview",), show="headings", height=15, selectmode="browse")
+        self.notes_tree.heading("preview", text="Notes")
+        self.notes_tree.column("preview", width=780)
+        notes_sb = ttk.Scrollbar(tab, orient="vertical", command=self.notes_tree.yview)
+        self.notes_tree.configure(yscrollcommand=notes_sb.set)
+        self.notes_tree.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=8)
+        notes_sb.pack(side="left", fill="y", pady=8)
+
+        self.notes_tree.bind("<<TreeviewSelect>>", self.on_note_select)
+        self.notes_tree.bind("<Double-1>", self.copy_selected_note)
+        self._drag_iid = None
+        self.notes_tree.bind("<Button-1>", self.on_note_drag_start)
+        self.notes_tree.bind("<B1-Motion>", self.on_note_drag_motion)
+        self.notes_tree.bind("<ButtonRelease-1>", self.on_note_drag_end)
+
+    def note_editor_content(self):
+        return self.note_text.get("1.0", "end-1c").strip()
+
+    def clear_note_editor(self):
+        self.note_text.delete("1.0", "end")
+        self.notes_tree.selection_remove(self.notes_tree.selection())
+
+    def add_note(self):
+        text = self.note_editor_content()
+        if not text:
+            messagebox.showwarning("Missing", "Note text is required.")
+            return
+        sel = self.notes_tree.selection()
+        sel_id = sel[0] if sel else None
+        # duplicate note text is not allowed (unless updating the same note)
+        for n in self.notes:
+            if n.get("text", "") == text and n.get("id") != sel_id:
+                messagebox.showwarning("Duplicate Note", "A note with this exact text already exists.")
+                return
+        note = {"id": uuid.uuid4().hex, "text": text}
+        if sel:
+            # update the selected note
+            old_id = sel[0]
+            for i, n in enumerate(self.notes):
+                if n.get("id") == old_id:
+                    self.notes[i] = note
+                    break
+        else:
+            self.notes.append(note)
+        save_notes(self.notes)
+        self.clear_note_editor()
+        self.refresh_notes()
+
+    def on_note_select(self, _evt):
+        sel = self.notes_tree.selection()
+        if not sel:
+            return
+        for n in self.notes:
+            if n.get("id") == sel[0]:
+                self.note_text.delete("1.0", "end")
+                self.note_text.insert("1.0", n.get("text", ""))
+                break
+
+    def copy_note(self):
+        text = self.note_editor_content()
+        if not text:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+
+    # --- drag & drop reordering ---
+    def on_note_drag_start(self, evt):
+        self._drag_iid = self.notes_tree.identify_row(evt.y) or None
+
+    def on_note_drag_motion(self, evt):
+        if not self._drag_iid:
+            return
+        target = self.notes_tree.identify_row(evt.y)
+        if target and target != self._drag_iid:
+            self.notes_tree.move(self._drag_iid, "", self.notes_tree.index(target))
+
+    def on_note_drag_end(self, _evt):
+        if not self._drag_iid:
+            return
+        order = self.notes_tree.get_children()
+        by_id = {n.get("id"): n for n in self.notes}
+        self.notes = [by_id[iid] for iid in order]
+        save_notes(self.notes)
+        self._drag_iid = None
+
+    def copy_selected_note(self, _evt=None):
+        sel = self.notes_tree.selection()
+        if not sel:
+            return
+        for n in self.notes:
+            if n.get("id") == sel[0]:
+                self.clipboard_clear()
+                self.clipboard_append(n.get("text", ""))
+                break
+
+    def delete_note(self):
+        sel = self.notes_tree.selection()
+        if not sel:
+            return
+        if messagebox.askyesno("Delete", "Delete the selected note?"):
+            self.notes = [n for n in self.notes if n.get("id") != sel[0]]
+            save_notes(self.notes)
+            self.clear_note_editor()
+            self.refresh_notes()
+
+    def refresh_notes(self):
+        for item in self.notes_tree.get_children():
+            self.notes_tree.delete(item)
+        for n in self.notes:
+            preview = " ".join(n.get("text", "").split())[:120]
+            self.notes_tree.insert("", "end", iid=n.get("id"), values=(preview,))
 
     def heading_text(self, col):
         arrow = ""
