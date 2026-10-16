@@ -56,7 +56,7 @@ def save_tasks(tasks):
 def load_notes():
     if NOTES_FILE.exists():
         notes = json.loads(NOTES_FILE.read_text(encoding="utf-8"))
-        return [{"id": n.get("id") or uuid.uuid4().hex, "text": n.get("text", "")} for n in notes]
+        return [{"id": n.get("id") or uuid.uuid4().hex, "title": n.get("title", ""), "text": n.get("text", "")} for n in notes]
     return []
 
 
@@ -162,11 +162,18 @@ class App(tk.Tk):
         # --- Note editor ---
         editor_frame = ttk.LabelFrame(tab, text="Note", padding=8)
         editor_frame.pack(fill="x", padx=8, pady=8)
+
+        ttk.Label(editor_frame, text="Title (optional):").grid(row=0, column=0, sticky="w")
+        self.note_title_var = tk.StringVar()
+        ttk.Entry(editor_frame, textvariable=self.note_title_var, width=60).grid(row=0, column=1, sticky="ew", padx=4, pady=2)
+        ttk.Button(editor_frame, text="Copy", width=6, command=self.copy_note_title).grid(row=0, column=2, padx=2)
+
         self.note_text = tk.Text(editor_frame, height=8, wrap="word")
         note_sb = ttk.Scrollbar(editor_frame, orient="vertical", command=self.note_text.yview)
         self.note_text.configure(yscrollcommand=note_sb.set)
-        self.note_text.pack(side="left", fill="both", expand=True)
-        note_sb.pack(side="left", fill="y")
+        self.note_text.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        note_sb.grid(row=1, column=3, sticky="ns", pady=(4, 0))
+        editor_frame.columnconfigure(1, weight=1)
 
         # --- Buttons ---
         btn_row = ttk.Frame(tab)
@@ -177,9 +184,11 @@ class App(tk.Tk):
         ttk.Button(btn_row, text="Delete", command=self.delete_note).pack(side="right", padx=2)
 
         # --- Notes list ---
-        self.notes_tree = ttk.Treeview(tab, columns=("preview",), show="headings", height=15, selectmode="browse")
-        self.notes_tree.heading("preview", text="Notes")
-        self.notes_tree.column("preview", width=780)
+        self.notes_tree = ttk.Treeview(tab, columns=("title", "preview"), show="headings", height=15, selectmode="browse")
+        self.notes_tree.heading("title", text="Title")
+        self.notes_tree.heading("preview", text="Note")
+        self.notes_tree.column("title", width=180)
+        self.notes_tree.column("preview", width=600)
         notes_sb = ttk.Scrollbar(tab, orient="vertical", command=self.notes_tree.yview)
         self.notes_tree.configure(yscrollcommand=notes_sb.set)
         self.notes_tree.pack(side="left", fill="both", expand=True, padx=(8, 0), pady=8)
@@ -197,6 +206,7 @@ class App(tk.Tk):
 
     def clear_note_editor(self):
         self.note_text.delete("1.0", "end")
+        self.note_title_var.set("")
         self.notes_tree.selection_remove(self.notes_tree.selection())
 
     def add_note(self):
@@ -211,7 +221,7 @@ class App(tk.Tk):
             if n.get("text", "") == text and n.get("id") != sel_id:
                 messagebox.showwarning("Duplicate Note", "A note with this exact text already exists.")
                 return
-        note = {"id": uuid.uuid4().hex, "text": text}
+        note = {"id": uuid.uuid4().hex, "title": self.note_title_var.get().strip(), "text": text}
         if sel:
             # update the selected note
             old_id = sel[0]
@@ -231,6 +241,7 @@ class App(tk.Tk):
             return
         for n in self.notes:
             if n.get("id") == sel[0]:
+                self.note_title_var.set(n.get("title", ""))
                 self.note_text.delete("1.0", "end")
                 self.note_text.insert("1.0", n.get("text", ""))
                 break
@@ -241,6 +252,13 @@ class App(tk.Tk):
             return
         self.clipboard_clear()
         self.clipboard_append(text)
+
+    def copy_note_title(self):
+        title = self.note_title_var.get().strip()
+        if not title:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(title)
 
     # --- drag & drop reordering ---
     def on_note_drag_start(self, evt):
@@ -287,7 +305,7 @@ class App(tk.Tk):
             self.notes_tree.delete(item)
         for n in self.notes:
             preview = " ".join(n.get("text", "").split())[:120]
-            self.notes_tree.insert("", "end", iid=n.get("id"), values=(preview,))
+            self.notes_tree.insert("", "end", iid=n.get("id"), values=(n.get("title", ""), preview))
 
     def heading_text(self, col):
         arrow = ""
