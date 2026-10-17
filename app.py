@@ -112,13 +112,14 @@ class App(tk.Tk):
         search_bar = ttk.Frame(tasks_tab)
         search_bar.pack(fill="x", padx=8)
         self.status_var = tk.StringVar()
-        ttk.Label(search_bar, textvariable=self.status_var).pack(side="left", padx=(0, 15))
         ttk.Label(search_bar, text="Search:").pack(side="left")
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *_: self.refresh_list())
         ttk.Entry(search_bar, textvariable=self.search_var, width=40).pack(side="left", padx=4)
         ttk.Button(search_bar, text="Clear", width=6, command=self.clear_search).pack(side="left", padx=2)
         ttk.Button(search_bar, text="Default Order", command=self.reset_task_order).pack(side="left", padx=(12, 2))
+        self.status_lbl = tk.Label(search_bar, textvariable=self.status_var, fg="blue")
+        self.status_lbl.pack(side="left", padx=(12, 2))
 
         # --- Buttons (same row as search, right side) ---
         ttk.Button(search_bar, text="Import", command=self.import_tasks).pack(side="right", padx=2)
@@ -145,6 +146,7 @@ class App(tk.Tk):
         sb.pack(side="left", fill="y", pady=8)
 
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
+        self.tree.bind("<Double-1>", self.copy_task_cell)
 
         # --- drag & drop reordering (manual order) ---
         self._task_drag_iid = None
@@ -190,6 +192,9 @@ class App(tk.Tk):
         ttk.Button(btn_row, text="Clear", width=8, command=self.clear_note_editor).pack(side="left", padx=2)
         ttk.Button(btn_row, text="Copy", width=8, command=self.copy_note).pack(side="left", padx=2)
         ttk.Button(btn_row, text="Delete", command=self.delete_note).pack(side="right", padx=2)
+        self.note_status_var = tk.StringVar()
+        self.note_status_lbl = tk.Label(btn_row, textvariable=self.note_status_var, fg="black")
+        self.note_status_lbl.pack(side="left", padx=10)
 
         # --- Notes list ---
         self.notes_tree = ttk.Treeview(tab, columns=("title", "preview"), show="headings", height=15, selectmode="browse")
@@ -296,7 +301,17 @@ class App(tk.Tk):
             if n.get("id") == sel[0]:
                 self.clipboard_clear()
                 self.clipboard_append(n.get("text", ""))
+                self.show_note_status(f"Copied to clipboard: {self.truncate(n.get('text', ''))}")
                 break
+
+    def show_note_status(self, msg, ms=2500):
+        self.note_status_var.set(msg)
+        self.note_status_lbl.configure(fg="blue")
+        self.after(ms, self.restore_note_status)
+
+    def restore_note_status(self):
+        self.note_status_var.set("")
+        self.note_status_lbl.configure(fg="black")
 
     def delete_note(self):
         sel = self.notes_tree.selection()
@@ -366,6 +381,32 @@ class App(tk.Tk):
     def copy_var(self, var):
         self.clipboard_clear()
         self.clipboard_append(var.get())
+
+    def copy_task_cell(self, evt):
+        col = self.tree.identify_column(evt.x)  # "#3" = Kimi, "#4" = Claude
+        row = self.tree.identify_row(evt.y)
+        if col not in ("#3", "#4") or not row:
+            return
+        val = self.tree.item(row, "values")[int(col[1:]) - 1]
+        if not val:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(val)
+        self.show_task_status(f"Copied to clipboard: {self.truncate(val)}")
+
+    @staticmethod
+    def truncate(text, limit=120):
+        text = " ".join(text.split())
+        return text if len(text) <= limit else text[: limit - 1] + "\u2026"
+
+    def show_task_status(self, msg, ms=2500):
+        self.status_var.set(msg)
+        self.status_lbl.configure(fg="blue")
+        self.after(ms, self.restore_task_status)
+
+    def restore_task_status(self):
+        self.refresh_list()  # restores the "Showing X of Y" count
+        self.status_lbl.configure(fg="black")
 
     def copy_selected(self, field):
         sel = self.tree.selection()
@@ -520,6 +561,13 @@ class App(tk.Tk):
 
     def clear_search(self):
         self.search_var.set("")
+        # also clear the Add Task form fields and any selected list row
+        self.tid_var.set("")
+        self.title_var.set("")
+        self.kimi_var.set("")
+        self.claude_var.set("")
+        for iid in self.tree.selection():
+            self.tree.selection_remove(iid)
         self.refresh_list()
 
     def refresh_list(self):
